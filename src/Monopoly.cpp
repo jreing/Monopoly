@@ -57,6 +57,7 @@ using namespace std;
 #define DARK_BLUE 7
 
 //class Player
+class Asset;
 
 class Player {
 public:
@@ -72,17 +73,17 @@ public:
 	int numOfJailAttempts;
 	int lastMove;
 	int assetWorth;
-	list<int> assets;
+	list<Asset*> assets;
+	Player* allPlayers;
+	int numOfPlayers;
 
 	Player() :
-			name("DEFAULT"), isAlive(true), money(1500), location(0), isInJail(
+			name("BANK"), isAlive(true), money(1500), location(0), isInJail(
 					false), numOfJailFreeCards(0), numOfRailroads(0), numOfUtilities(
 					0), numOfDoubles(0), numOfJailAttempts(0), lastMove(0), assetWorth(
-					0) {
+					0), allPlayers(), numOfPlayers(0) {
 		srand(time(0));
 	}
-
-	;
 
 	void setName(string name) {
 		this->name = name;
@@ -91,6 +92,7 @@ public:
 		return name;
 	}
 	bool sell();
+	bool buy();
 	bool mortgage();
 	bool unmortgage();
 	bool develop();
@@ -136,7 +138,28 @@ public:
 		}
 		location = (location + steps) % 40;
 	}
+	bool hasLost(bool inDebt) {
+		//checks if player is in debt and has all properties mortgaged or has no properties
+		if (inDebt) {
+			if (assets.empty()) {
+				cout << "No Assets" << endl;
+				return true;
+			}
+			if (getUnmortgaged().empty()) {
+				cout << "No assets to mortgage" << endl;
+				return true;
+			}
+		}
+		return false;
 
+	}
+
+	list<string> getMortgaged();
+	list<string> getUnmortgaged();
+	list<string> getSeries();
+	list<string> getDevelopedStreets();
+	list<string> getAssetsForSale();
+	void transferAssets(Player* payee);
 };
 
 //Location Classes:
@@ -160,17 +183,48 @@ public:
 
 	bool demandMoney(Player& payer, Player* payee, int sumToPay) {
 		cout << "Sum to Pay: " << sumToPay << endl;
-		if (payer.money < sumToPay) {
-			cout << "insufficient funds!" << endl;
+		char c;
+		bool inDebt = (payer.money < sumToPay);
+		bool hasLost = payer.hasLost(inDebt);
+		while (inDebt && !hasLost) {
+			cout << "Insufficient funds! Please settle debt of " << sumToPay
+					<< "$" << endl;
+			cout << "Cash Balance: " << payer.money << "$" << endl; // players[cur].getName();
+			cin >> c;
+
+			switch (c) {
+
+			case 'm':
+				payer.mortgage();
+				break; //end case m
+			case 'u':
+				payer.unmortgage();
+				break;
+			case 'd':
+				payer.develop();
+				break;
+			case 'x':
+				payer.undevelop();
+				break;
+			case 's':
+				payer.sell();
+				break;
+			} //end switch
+			inDebt = (payer.money < sumToPay);
+			hasLost = payer.hasLost(inDebt);
+		} //end while
+		if (hasLost) {
+			//cout << "Lost" <<endl;
+			payer.transferAssets(payee);
 			return false;
-			//TODO: resolve
 		} else {
 			payer.money -= sumToPay;
 			payee->money += sumToPay;
-			cout << "Payed!!" << endl;
+			cout << "Debt was payed!!" << endl;
 			return true;
 		}
 	}
+
 	virtual const string getOwner() const {
 		return "";
 	}
@@ -190,10 +244,11 @@ public:
 	Player* owner;
 	bool isMortgaged;
 	int data[11];
-	//Asset(): Location(string("")), owner(-1){};
-	//~Asset()=default;
+//Asset(): Location(string("")), owner(-1){};
+//~Asset()=default;
 	Asset(string name) :
-			Location(name), shortName(""), owner(nullptr), isMortgaged(false) {
+			Location(name), shortName(""), owner(&defaultPlayer), isMortgaged(
+					false) {
 	}
 
 	void setShortName(string shortName) {
@@ -214,43 +269,21 @@ public:
 	bool visit(Player& p) {
 		bool owned;
 		cout << p.name << " Visiting " << Location::getName() << endl;
-		if (owner == nullptr) {
+		if (owner == &defaultPlayer) {
 			cout << "Not owned" << endl;
 			owned = false;
 		} else {
 			cout << "Owned by " << owner->name << endl;
 			owned = true;
-			pay(p);
+			if (!pay(p)) {
+				p.isAlive = false;
+			}
 		}
 		return (owned);
 	}
-	/*override {
-	 if (owner == "") {
-	 char c = '0';
-	 int action = 0;
-	 while (!action) {
-	 cout << "Do you want to purchase " << Location::getName()
-	 << " for " << Asset::getPrice() << " ?" << endl;
-	 cin >> c;
-	 switch (c) {
-	 case 'y':
-	 purchase(p);
-	 action = 1;
-	 break;
-	 case 'n':
-	 action = 1;
-	 break;
-	 case 'e':
-	 exit(0);
-	 break;
-	 }
-	 }
-	 }
-	 }
-	 */
 
 	virtual bool purchase(Player &p) {
-		cout << "Base Purchase" << endl;
+		//cout << "Base Purchase" << endl;
 		if (p.money < data[PRICE]) {
 			cout << "Insufficient Funds to buy " << Location::getName() << endl;
 			return false;
@@ -259,23 +292,94 @@ public:
 			cout << "Purchasing " << Location::getName() << "for "
 					<< data[PRICE] << "$" << endl;
 			p.assetWorth += data[PRICE];
-			p.assets.push_back(p.location);
+			p.assets.push_back(this);
 			owner = &p;
 			return true;
 		}
 	}
-	;
+	bool unmortgage(Player& p) {
+		//TODO: Check if this is correct
+		cout << "Unmortgaging " << Location::getName() << "for "
+				<< 1.1 * data[MORTGAGE] << "$" << endl;
+		if (p.money < 1.1 * data[MORTGAGE]) {
+			cout << "Insufficient funds. Unmortgage failed" << endl;
+			return false;
+		} else {
+			p.money -= (int) (1.1 * data[MORTGAGE]);
+			isMortgaged = false;
+			//TODO: Check if this is correct
+			p.assetWorth += data[PRICE];
+			p.assetWorth -= data[MORTGAGE];
+			return true;
+		}
+	}
+
+	bool mortgage(Player& p) {
+		cout << "Mortgaging " << Location::getName() << "for " << data[MORTGAGE]
+				<< "$" << endl;
+		isMortgaged = true;
+		p.money += data[MORTGAGE];
+		//TODO: Check if this is correct
+		p.assetWorth -= data[PRICE];
+		p.assetWorth += data[MORTGAGE];
+		return true;
+	}
+
+	bool sell(Player& owner, Player* players, int playerToSellTo, int price) {
+		if (players[playerToSellTo].money < price) {
+			cout << "Buyer has insufficient funds. Sale cancelled." << endl;
+		} else {
+			this->owner = &players[playerToSellTo];
+			if (isMortgaged) {
+				owner.assetWorth -= this->data[PRICE];
+			} else {
+				owner.assetWorth -= this->data[MORTGAGE];
+			}
+			owner.assets.remove(this);
+			owner.money += price;
+			players[playerToSellTo].assets.push_back(this);
+			players[playerToSellTo].money -= price;
+
+			cout << this->getName() << "was successfully sold to "
+					<< players[playerToSellTo].getName() << " for " << price
+					<< endl;
+			return true;
+		}
+		return false;
+	}
+	bool buy(Player& buyer, Player* players, int playerToBuyFrom, int price) {
+		Player* owner = &players[playerToBuyFrom];
+		if (buyer.money < price) {
+			cout << "Buyer has insufficient funds. Sale cancelled." << endl;
+		} else {
+			this->owner = &buyer;
+			if (isMortgaged) {
+				owner->assetWorth -= this->data[MORTGAGE];
+			} else {
+				owner->assetWorth -= this->data[PRICE];
+			}
+			owner->assets.remove(this);
+			owner->money += price;
+			buyer.assets.push_back(this);
+			buyer.money -= price;
+
+			cout << this->getName() << "was successfully bought from "
+					<< owner->getName() << " for " << price << endl;
+			return true;
+		}
+		return false;
+	}
+
 }
 ;
 
 class Street: public Asset {
-private:
+public:
 	int development;
 	bool series;
 
-public:
 	Street() :
-			Asset("") {
+			Asset(""), development(RENT), series(false) {
 	}
 	;
 	Street(string name) :
@@ -308,7 +412,75 @@ public:
 
 		return Location::demandMoney(payer, owner, sumToPay);
 	}
+	bool develop(Player& p, int numOfHouses) {
+		cout << "Developing " << Location::getName() << " for "
+				<< numOfHouses * Asset::data[HOUSE_COST] << "$" << endl;
+		if (p.money < numOfHouses * data[HOUSE_COST]) {
+			cout << "insufficient funds" << endl;
+			return false;
+		}
+		p.assetWorth += data[HOUSE_COST];
+		development += numOfHouses;
+		p.money -= numOfHouses * data[HOUSE_COST];
+		return true;
+	}
 
+	bool undevelop(Player& p, int numOfHouses) {
+		cout << "Removing " << numOfHouses << "houses from"
+				<< Location::getName() << " for "
+				<< numOfHouses * data[HOUSE_COST] / 2 << "$" << endl;
+
+		p.assetWorth -= data[HOUSE_COST];
+		development -= numOfHouses;
+		p.money += (int) numOfHouses * data[HOUSE_COST] / 2;
+		return true;
+
+	}
+
+	bool purchase(Player &p) override {
+		//cout << "Street purchase" << endl;
+		bool wasPurchased = Asset::purchase(p);
+		if (wasPurchased) {
+			series = checkSeriesAndSet(p);
+			//TODO: make all series booleans true now!
+			cout << "Purchased:" << *this << endl;
+		}
+		return wasPurchased;
+	}
+	bool checkSeriesAndSet(Player& p) {
+		int seriesSize;
+		if (data[SERIES] == 0 || data[SERIES] == 7) {
+			seriesSize = 2;
+		} else {
+			seriesSize = 3;
+		}
+		int cnt = 0;
+		list<Street*> seriesStreets;
+		//s->setSeries(gameBoard.checkSeries(p, a->data[SERIES]));
+		for (Asset* a : p.assets) {
+			//DEBUG cout << *((Street*) a) << endl;
+
+			if (a->data[TYPE] == 'S' && a->data[SERIES] == this->data[SERIES]
+					&& !a->isMortgaged) {
+				cnt++;
+				//cout << "Pushed to seriesstreets:" << *((Street*) a) << endl;
+				seriesStreets.push_back((Street*) a);
+			}
+		}
+		//DEBUG cout << "cnt=" << cnt << " seriesSize=" << seriesSize << endl;
+
+		//if series is made, set the series flag true for rest of the series
+		if (cnt == seriesSize) {
+			for (Street* s : seriesStreets) {
+				s->series = true;
+				cout << "Series flag turned on for: " << s->getName() << endl;
+			}
+			return true;
+		} else {
+			return false;
+		}
+	}
+	friend ostream& operator<<(ostream& os, const Street& s);
 };
 
 class Railroad: public Asset {
@@ -349,23 +521,14 @@ public:
 		}
 
 		return Location::demandMoney(payer, owner, sumToPay);
-		/*if (payer.money < sumToPay) {
-		 cout << "insufficient funds!" << endl;
-		 return false;
-		 //TODO: resolve
-		 } else {
-		 payer.money -= sumToPay;
-		 owner->money += sumToPay;
-		 cout << "Payed!!" << endl;
-		 return true;
-		 }*/
+
 	}
 	bool purchase(Player &p) override {
-		cout << "Railroad Purchase" << endl;
+		//cout << "Railroad Purchase" << endl;
 		bool wasPurchased = Asset::purchase(p);
 		if (wasPurchased) {
 			p.numOfRailroads++;
-			cout << "numOfRailroad Inc " << p.numOfRailroads << endl;
+			//cout << "numOfRailroad Inc " << p.numOfRailroads << endl;
 		}
 		return wasPurchased;
 	}
@@ -396,11 +559,11 @@ public:
 
 	}
 	bool purchase(Player &p) override {
-		cout << "Utility Purchase" << endl;
+		//cout << "Utility Purchase" << endl;
 		bool wasPurchased = Asset::purchase(p);
 		if (wasPurchased) {
 			p.numOfUtilities++;
-			cout << "numOfUtilities Inc " << p.numOfUtilities << endl;
+			//cout << "numOfUtilities Inc " << p.numOfUtilities << endl;
 		}
 		return wasPurchased;
 	}
@@ -600,7 +763,11 @@ public:
 	;
 	bool visit(Player& p) override {
 		cout << "Luxury Tax: pay 75$" << endl;
-		Location::demandMoney(p, &defaultPlayer, 75);
+		if (!Location::demandMoney(p, &defaultPlayer, 75)) {
+			p.isAlive = false;
+			return false;
+		}
+		return true;
 	}
 	;
 };
@@ -621,7 +788,6 @@ public:
 			switch (c) {
 			case '1':
 				sumToPay = 0.1 * (p.assetWorth + p.money);
-
 				break;
 			case '2':
 				sumToPay = 200;
@@ -629,7 +795,11 @@ public:
 			}
 		}
 
-		return Location::demandMoney(p, &defaultPlayer, sumToPay);
+		if (!Location::demandMoney(p, &defaultPlayer, sumToPay)) {
+			p.isAlive = false;
+			return false;
+		}
+		return true;
 	}
 	;
 };
@@ -721,7 +891,7 @@ public:
 		for (int i = 0; i < 40; i++) {
 			for (int j = 0; j < numOfPlayers; j++) {
 				if (players[j].location == i) {
-					cout << j;
+					cout << j + 1;
 				} else {
 					cout << " ";
 				}
@@ -773,9 +943,13 @@ public:
 					locations[pos] = make_unique<Street>(v[0]);
 					Street* s = ((Street*) locations[pos].get());
 					s->setShortName(v[1]);
+					cout << "Add street:" << endl;
 					for (int i = 0; i < 10; i++) {
 						s->data[i] = stoi(v[i + 3]);
+						cout << i << ":" << s->data[i] << endl;
 					}
+					s->data[10] = v[13].at(0);
+
 					break;
 				}
 				case 'U': {
@@ -894,7 +1068,7 @@ public:
 
 int main() {
 
-	//initialize board locations map
+//initialize board locations map
 
 	int numOfPlayers = 4;
 
@@ -910,9 +1084,9 @@ int main() {
 
 	Board gameBoard;
 	gameBoard.loadCSV();
-	//exit(0);
+//exit(0);
 
-	//gameBoard.loadConfig();
+//gameBoard.loadConfig();
 	gameBoard.printBoard(players, numOfPlayers);
 
 	/*
@@ -927,20 +1101,50 @@ int main() {
 
 	 }
 	 */
+
+	for (int i = 0; i < numOfPlayers; i++) {
+		players[i].allPlayers = players;
+		players[i].numOfPlayers = numOfPlayers;
+	}
+
+	//DEBUG
 	players[0].setName("Johnny");
 	players[1].setName("Michael");
 	players[2].setName("Isaac");
 	players[3].setName("David");
 
-	cout << string(50, '\n');
+	//buy blue series for checking only
+	((Street*) gameBoard.locations[39].get())->purchase(players[0]);
+	((Street*) gameBoard.locations[37].get())->purchase(players[0]);
+	cout << ((Street*) gameBoard.locations[37].get())->data[TYPE] << endl;
+	cout << "GAME START" << endl;
+//cout << string(50, '\n');
+	((Street*) gameBoard.locations[4].get())->visit(players[0]);
+	((Street*) gameBoard.locations[4].get())->visit(players[0]);
+	((Street*) gameBoard.locations[4].get())->visit(players[0]);
+	((Street*) gameBoard.locations[4].get())->visit(players[0]);
+
+	//END DEBUG
+
 	char c = '0';
 	int cur = 0;
 	bool diceRolled = false;
 	bool purchaseable = false;
 	while (c != 'e') {
 		Player& p = players[cur];
+		int cnt = 1;
+		while (!players[cur].isAlive) {
+			//skip over dead players
+			cur = cur + 1 % numOfPlayers;
+			cnt++;
+			if (cnt == numOfPlayers - 1) {
+				cout << "Game Over" << endl;
+				//TODO : declare winner
+				break;
+			}
+		}
 
-		cout << "Current Player: " << cur << " Cash Balance: " << p.money; // players[cur].getName();
+		cout << "Current Player: " << cur + 1 << " Cash Balance: " << p.money; // players[cur].getName();
 		if (p.isInJail && !diceRolled) {
 			diceRolled = (gameBoard.locations[p.location]->visit(p));
 			if (!diceRolled && p.numOfJailAttempts == 2) {
@@ -960,7 +1164,6 @@ int main() {
 				gameBoard.printBoard(players, numOfPlayers);
 				purchaseable = !(gameBoard.locations[p.location]->visit(p));
 				cout << purchaseable << endl;
-
 			}
 
 			break;
@@ -971,9 +1174,9 @@ int main() {
 				Asset* a = (Asset*) gameBoard.locations[p.location].get();
 				purchaseable = !(a->purchase(p));
 				if (a->data[TYPE] == 'S' && !purchaseable) {
-					Street* s = (Street*) gameBoard.locations[p.location].get();
-					s->setSeries(gameBoard.checkSeries(p, a->data[SERIES]));
-					cout << "Series status: " << s->getSeries() << endl;
+					//	Street* s = (Street*) gameBoard.locations[p.location].get();
+					//	s->setSeries(gameBoard.checkSeries(p, a->data[SERIES]));
+					//	cout << "Series status: " << s->getSeries() << endl;
 				}
 			}
 
@@ -988,12 +1191,357 @@ int main() {
 				cout << "Please roll dice first" << endl;
 			}
 			break;
-		}
 
-	}
+		case 'm':
+			p.mortgage();
+			break; //end case m
+		case 'u':
+			p.unmortgage();
+			break;
+		case 'd':
+			p.develop();
+			break;
+		case 'x':
+			p.undevelop();
+			break;
+		case 's':
+			p.sell();
+			break;
+		case 'b':
+			p.buy();
+			break;
+
+		} //end switch
+	} //end while
 
 	cout << "game quit" << endl;
 
 	return 0;
+}
+
+bool Player::mortgage() {
+	list<string> unmortgagedAssets = getUnmortgaged();
+
+	if (unmortgagedAssets.empty()) {
+		cout << "No assets to mortgage" << endl;
+		return false;
+	}
+	cout << "Choose asset to mortgage" << endl;
+
+	string sho;
+	cin >> sho;
+	if (find(unmortgagedAssets.begin(), unmortgagedAssets.end(), sho)
+			!= unmortgagedAssets.end()) {
+		//cout << "Mortgaging " << sho << endl;
+	}
+	for (Asset* a : assets) {
+		if (a->getShortName() == sho) {
+			return (a->mortgage(*this));
+		}
+	}
+	return false;
+}
+bool Player::unmortgage() {
+	list<string> mortgagedAssets = getMortgaged();
+
+	if (mortgagedAssets.empty()) {
+		cout << "No assets to unmortgage" << endl;
+		return false;
+	}
+	cout << "Choose asset to unmortgage" << endl;
+
+	string sho;
+	cin >> sho;
+	if (find(mortgagedAssets.begin(), mortgagedAssets.end(), sho)
+			!= mortgagedAssets.end()) {
+		cout << "Unmortgaging " << sho << endl;
+		for (Asset* a : assets) {
+			if (a->getShortName() == sho) {
+				return a->unmortgage(*this);
+			}
+		}
+	}
+
+	return false;
+}
+
+bool Player::develop() {
+	list<string> seriesStreets = getSeries();
+	if (seriesStreets.empty()) {
+		cout << "No streets available for development" << endl;
+		return false;
+	}
+	cout << "Choose asset to develop" << endl;
+
+	string sho;
+	cin >> sho;
+	Street* toDevelop;
+	if (find(seriesStreets.begin(), seriesStreets.end(), sho)
+			!= seriesStreets.end()) {
+		for (Asset* a : assets) {
+			if (a->getShortName() == sho) {
+				toDevelop = (Street*) a;
+				break;
+			}
+		}
+
+		int numOfHouses;
+		cout << "Developing " << toDevelop->getName() << ":" << endl;
+
+		cout << "Please type number of houses to build: " << endl;
+
+		cin >> numOfHouses;
+		if (numOfHouses > (HOTEL - toDevelop->development) || numOfHouses < 1) {
+			cout << "Invalid number of houses to build" << endl;
+			return false;
+		} else {
+			toDevelop->develop(*this, numOfHouses);
+		}
+	} else {
+		return false;
+	}
+	return false;
+}
+
+bool Player::undevelop() {
+	list<string> developedStreets = getDevelopedStreets();
+
+	if (developedStreets.empty()) {
+		cout << "No streets with houses available for removal" << endl;
+		return false;
+	}
+	cout << "Choose street from which to remove houses" << endl;
+	string sho;
+	cin >> sho;
+	Street* toUnDevelop;
+	if (find(developedStreets.begin(), developedStreets.end(), sho)
+			!= developedStreets.end()) {
+		for (Asset* a : assets) {
+			if (a->getShortName() == sho) {
+				toUnDevelop = (Street*) a;
+				break;
+			}
+		}
+		int numOfHouses;
+
+		cout << "Removing houses from " << toUnDevelop->getName() << ":"
+				<< endl;
+		cout << "Please type number of houses to remove: " << endl;
+
+		cin >> numOfHouses;
+		if (numOfHouses > toUnDevelop->development - 2 || numOfHouses < 1) {
+			cout << "Invalid number of houses to remove" << endl;
+			return false;
+		} else {
+			toUnDevelop->undevelop(*this, numOfHouses);
+		}
+	} else {
+		return false;
+	}
+	return false;
+}
+
+bool Player::sell() {
+	list<string> assetsForSale = getAssetsForSale();
+	if (assetsForSale.empty()) {
+		cout << "No streets available for sale (Try removing houses if needed)"
+				<< endl;
+		return false;
+	}
+	cout << "Choose street to sell" << endl;
+	string sho;
+	cin >> sho;
+	Street* toSell;
+	if (find(assetsForSale.begin(), assetsForSale.end(), sho)
+			!= assetsForSale.end()) {
+		for (Asset* a : assets) {
+			if (a->getShortName() == sho) {
+				toSell = (Street*) a;
+				break;
+			}
+		}
+		int playerToSellTo;
+
+		cout << "Please select the player you wish to sell to: " << endl;
+
+		for (int i = 0; i < numOfPlayers; i++) {
+			if (&allPlayers[i] != this) {
+				cout << i + 1 << ": " << allPlayers[i].name << endl;
+			}
+		}
+
+		cin >> playerToSellTo;
+		playerToSellTo--;
+		if (playerToSellTo < 0 || playerToSellTo >= numOfPlayers
+				|| &allPlayers[playerToSellTo] == this) {
+			cout << "Invalid player selected" << endl;
+			return false;
+		} else {
+			cout << "Selling " << toSell->getName() << " to "
+					<< allPlayers[playerToSellTo].name << endl;
+			cout << "Please type the amount for which the asset is being sold"
+					<< "(type a negative number to cancel sale) " << endl;
+			int sellingPrice;
+			cin >> sellingPrice;
+			if (sellingPrice < 0) {
+				cout << "Sale cancelled" << endl;
+				return false;
+			}
+			return toSell->sell(*this, allPlayers, playerToSellTo, sellingPrice);
+		}
+	} else {
+		return false;
+	}
+	return false;
+}
+
+bool Player::buy() {
+	int playerToBuyFrom;
+
+	cout << "Please select the player you wish to buy from: " << endl;
+
+	for (int i = 0; i < numOfPlayers; i++) {
+		if (&allPlayers[i] != this) {
+			cout << i + 1 << ": " << allPlayers[i].name << endl;
+		}
+	}
+
+	cin >> playerToBuyFrom;
+	playerToBuyFrom--;
+	if (playerToBuyFrom < 0 || playerToBuyFrom >= numOfPlayers
+			|| &allPlayers[playerToBuyFrom] == this) {
+		cout << "Invalid player selected" << endl;
+		return false;
+	} else {
+
+		list<string> assetsForSale =
+				allPlayers[playerToBuyFrom].getAssetsForSale();
+		if (assetsForSale.empty()) {
+			cout << "No streets available to buy" << endl;
+			return false;
+		}
+		cout << "Choose street to buy" << endl;
+		string sho;
+		cin >> sho;
+		Street* toBuy;
+		if (find(assetsForSale.begin(), assetsForSale.end(), sho)
+				!= assetsForSale.end()) {
+			for (Asset* a : allPlayers[playerToBuyFrom].assets) {
+				if (a->getShortName() == sho) {
+					toBuy = (Street*) a;
+					break;
+				}
+			}
+		} else {
+			return false;
+		}
+		cout << "Buying " << toBuy->getName() << " from "
+				<< allPlayers[playerToBuyFrom].name << endl;
+
+		//TODO fix tuple list
+		cout << "Please type the amount for which the asset is being bought"
+				<< "(type a negative number to cancel purchase) " << endl;
+		int buyingPrice;
+		cin >> buyingPrice;
+		if (buyingPrice < 0) {
+			cout << "Purchase cancelled" << endl;
+			return false;
+		}
+		return toBuy->buy(*this, allPlayers, playerToBuyFrom, buyingPrice);
+
+	}
+
+	return false;
+}
+
+list<string> Player::getDevelopedStreets() {
+	list<string> developedStreets;
+	for (Asset* a : assets) {
+		if (a->data[TYPE] == 'S') {
+			Street* s = (Street*) a;
+			if (s->development > RENT) {
+				cout << a->getShortName() << ": " << a->getName() << "("
+						<< s->development - 2 << ")" << endl;
+				developedStreets.push_back(a->getShortName());
+			}
+		}
+	}
+	return developedStreets;
+}
+
+list<string> Player::getMortgaged() {
+	list<string> mortgagedAssets;
+	for (Asset* a : assets) {
+		if (a->isMortgaged) {
+			cout << a->getShortName() << " :" << a->getName() << endl;
+			mortgagedAssets.push_back(a->getShortName());
+		}
+	}
+	return mortgagedAssets;
+}
+
+list<string> Player::getUnmortgaged() {
+	list<string> unmortgagedAssets;
+	for (Asset* a : assets) {
+		if (!(a->isMortgaged)) {
+			cout << a->getShortName() << " :" << a->getName() << endl;
+			unmortgagedAssets.push_back(a->getShortName());
+		}
+	}
+	return unmortgagedAssets;
+}
+list<string> Player::getSeries() {
+	list<string> seriesStreets;
+	for (Asset* a : assets) {
+		if (!(a->isMortgaged) && a->data[TYPE] == 'S') {
+			Street* s = (Street*) a;
+			if (s->getSeries() && s->development < HOTEL) {
+				cout << a->getShortName() << ": " << a->getName() << "("
+						<< s->development - 2 << ")" << endl;
+
+				seriesStreets.push_back(a->getShortName());
+
+			}
+		}
+	}
+	return seriesStreets;
+}
+
+list<string> Player::getAssetsForSale() {
+	list<string> assetsForSale;
+	for (Asset* a : assets) {
+		if (a->data[TYPE] == 'S') {
+			Street* s = (Street*) a;
+			if (s->development == RENT) {
+				cout << a->getShortName() << ": " << a->getName() << "("
+						<< s->development - 2 << ")" << endl;
+				assetsForSale.push_back(a->getShortName());
+			}
+		} else {
+			cout << a->getShortName() << ": " << a->getName() << endl;
+			assetsForSale.push_back(a->getShortName());
+		}
+	}
+	return assetsForSale;
+}
+
+void Player::transferAssets(Player* payee) {
+	cout << "Player " << getName() << " has LOST to player " << payee->getName()
+			<< endl;
+	for (Asset* a : assets) {
+		cout << a->getName() << " is transferred to " << payee->getName()
+				<< endl;
+		a->owner = payee;
+		payee->assets.push_back(a);
+
+	}
+	payee->money += money;
+	money = 0;
+}
+
+ostream& operator<<(ostream& os, const Street& s) {
+	os << s.getName() << ": isSeries: " << s.series << ", Series: "
+			<< s.data[SERIES] << ", type: " << s.data[TYPE];
+	return os;
 }
 
